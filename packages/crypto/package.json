@@ -1,0 +1,27 @@
+{
+  "name": "@eplps/crypto",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "imports": {
+    "#sodium": {
+      "browser": "./src/sodium.browser.ts",
+      "node": "./src/sodium.node.ts",
+      "default": "./src/sodium.browser.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "canonicalize": "^2.1.0",
+    "ethers": "^6.13.5",
+    "libsodium-wrappers": "^0.7.15",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.13"
+  }
+}

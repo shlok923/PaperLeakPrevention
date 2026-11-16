@@ -1,0 +1,18 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #17202a; background: #f2f5f7; font-synthesis: none; }
+body { margin: 0; }
+main { max-width: 860px; margin: 12vh auto; padding: 0 24px; }
+.eyebrow { color: #19766b; font-size: 12px; font-weight: 700; letter-spacing: .12em; }
+h1 { margin: 8px 0; font-size: clamp(32px, 5vw, 48px); }
+header > p:last-child { color: #52616b; }
+.card { margin-top: 40px; padding: 28px; background: white; border: 1px solid #dbe3e8; border-radius: 16px; }
+.card p { color: #52616b; }
+button { padding: 12px 16px; border: 0; border-radius: 8px; color: white; background: #19766b; font: inherit; }
+button:disabled { opacity: .65; }
+.summary { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 20px; }
+.summary div { min-width: 0; display: grid; gap: 8px; }
+.summary span { color: #63737d; font-size: 13px; }
+.summary strong { overflow-wrap: anywhere; }
+.success { color: #19766b !important; font-weight: 600; }
+.status { margin-top: 24px; color: #41525d; }
+input[type="file"] { max-width: 100%; }
+@media (max-width: 700px) { main { margin: 6vh auto; } .summary { grid-template-columns: 1fr; } }

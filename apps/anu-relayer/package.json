@@ -1,0 +1,9 @@
+{
+  "name": "@eplps/anu-relayer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "run": "tsx src/index.ts", "build": "tsc --noEmit", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@eplps/shared": "0.1.0", "commander": "^13.1.0", "dotenv": "^16.4.7", "ethers": "^6.13.5", "zod": "^3.24.2" },
+  "devDependencies": { "tsx": "^4.19.3", "typescript": "^5.8.3" }
+}
