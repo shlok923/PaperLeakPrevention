@@ -1,0 +1,102 @@
+[
+  {
+    "text": "Which element has atomic number 1?",
+    "options": [
+      "Chlorine",
+      "Carbon",
+      "Hydrogen",
+      "Sodium"
+    ],
+    "correct": 2
+  },
+  {
+    "text": "How many grams are in 6 mol of water (H₂O, 18 g/mol)?",
+    "options": [
+      "54 g",
+      "108 g",
+      "96 g",
+      "24 g"
+    ],
+    "correct": 1
+  },
+  {
+    "text": "A solution has [H⁺] = 10⁻5 mol/L. What is its pH?",
+    "options": [
+      "5",
+      "9",
+      "6",
+      "10"
+    ],
+    "correct": 0
+  },
+  {
+    "text": "What is the molar mass of CO₂?",
+    "options": [
+      "44 g/mol",
+      "46 g/mol",
+      "88 g/mol",
+      "40 g/mol"
+    ],
+    "correct": 0
+  },
+  {
+    "text": "Which element has atomic number 8?",
+    "options": [
+      "Hydrogen",
+      "Oxygen",
+      "Sodium",
+      "Chlorine"
+    ],
+    "correct": 1
+  },
+  {
+    "text": "How many grams are in 6 mol of water (H₂O, 18 g/mol)?",
+    "options": [
+      "54 g",
+      "24 g",
+      "108 g",
+      "96 g"
+    ],
+    "correct": 2
+  },
+  {
+    "text": "A solution has [H⁺] = 10⁻5 mol/L. What is its pH?",
+    "options": [
+      "9",
+      "5",
+      "10",
+      "6"
+    ],
+    "correct": 1
+  },
+  {
+    "text": "What is the molar mass of NaCl?",
+    "options": [
+      "54.5 g/mol",
+      "117 g/mol",
+      "60.5 g/mol",
+      "58.5 g/mol"
+    ],
+    "correct": 3
+  },
+  {
+    "text": "Which element has atomic number 17?",
+    "options": [
+      "Chlorine",
+      "Hydrogen",
+      "Magnesium",
+      "Oxygen"
+    ],
+    "correct": 0
+  },
+  {
+    "text": "How many grams are in 4 mol of water (H₂O, 18 g/mol)?",
+    "options": [
+      "36 g",
+      "22 g",
+      "64 g",
+      "72 g"
+    ],
+    "correct": 3
+  }
+]

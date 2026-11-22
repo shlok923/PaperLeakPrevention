@@ -1,36 +1,17 @@
 {
-  "name": "eplps",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Exam Paper Leak-Prevention System prototype",
-  "packageManager": "npm@9.2.0",
-  "workspaces": ["apps/*", "packages/*"],
-  "engines": {
-    "node": ">=20"
-  },
-  "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "dev:chain": "npm run chain --workspace=@eplps/contracts",
-    "deploy:local": "npm run deploy:local --workspace=@eplps/contracts",
-    "deploy:cosmos": "npm run deploy --workspace=@eplps/contracts",
-    "committee:commit": "npm run commit --workspace=@eplps/committee-cli",
-    "committee:reveal": "npm run reveal --workspace=@eplps/committee-cli",
-    "keyholder:gen-key": "npm run gen-key --workspace=@eplps/committee-cli",
-    "relayer:run": "npm run run --workspace=@eplps/anu-relayer",
-    "audit": "npm run verify --workspace=@eplps/auditor-cli",
-    "dev:api": "npm run dev --workspace=@eplps/api",
-    "dev:key-service": "npm run dev --workspace=@eplps/key-service",
-    "dev:admin": "npm run dev --workspace=@eplps/admin-web",
-    "dev:submitter": "npm run dev --workspace=@eplps/submitter-web",
-    "dev:center": "npm run dev --workspace=@eplps/center-web"
-  },
-  "devDependencies": {
-    "@types/node": "^22.15.0",
-    "typescript": "^5.8.3"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.7"
-  }
+    "name": "eplp",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@12.21.0",
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "dev": "node apps/cli/src/dev.ts",
+        "e2e": "pnpm -C apps/cli e2e",
+        "eplp": "node apps/cli/src/main.ts",
+        "build": "pnpm -C packages/contracts build && pnpm -r --filter ./apps/exam-client --filter ./apps/portal build",
+        "typecheck": "pnpm -r --parallel typecheck",
+        "test": "pnpm -C packages/contracts test && pnpm -C packages/protocol test"
+    }
 }

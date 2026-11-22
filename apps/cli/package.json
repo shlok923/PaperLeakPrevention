@@ -1,0 +1,26 @@
+{
+    "name": "@eplp/cli",
+    "private": true,
+    "type": "module",
+    "bin": {
+        "eplp": "src/main.ts"
+    },
+    "scripts": {
+        "eplp": "node src/main.ts",
+        "e2e": "EPLP_DATA=.data-e2e node src/e2e.ts",
+        "e2e:besu": "EPLP_DATA=.data-e2e-besu E2E_CHAIN=besu node src/e2e.ts",
+        "typecheck": "tsc -p ."
+    },
+    "dependencies": {
+        "@eplp/node-kit": "workspace:*",
+        "@eplp/protocol": "workspace:*",
+        "viem": "^2.58.2"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.6",
+        "typescript": "^7.0.2"
+    },
+    "exports": {
+        "./demo": "./src/demo.ts"
+    }
+}

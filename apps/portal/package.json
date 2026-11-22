@@ -1,0 +1,32 @@
+{
+    "name": "@eplp/portal",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "typecheck": "tsc -p . --noEmit",
+        "preview": "vite preview",
+        "candidates": "node verify/candidates.ts",
+        "verify": "node verify/e2e.ts"
+    },
+    "dependencies": {
+        "@eplp/protocol": "workspace:*",
+        "@fontsource-variable/jetbrains-mono": "^5.3.0",
+        "@fontsource-variable/reddit-sans": "^5.3.0",
+        "react": "^19.3.1",
+        "react-dom": "^19.3.1",
+        "viem": "^2.58.2"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.6",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@vitejs/plugin-react": "^6.3.0",
+        "playwright-core": "^1.65.1",
+        "typescript": "^7.0.2",
+        "vite": "^8.3.8",
+        "@eplp/cli": "workspace:*",
+        "@eplp/node-kit": "workspace:*"
+    }
+}

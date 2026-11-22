@@ -1,49 +1,58 @@
-# EPLPS prototype
+# EPLP: exam paper leak prevention
 
-Exam Paper Leak-Prevention System prototype for a self-hosted Cosmos EVM chain. The system uses standard EVM JSON-RPC and Solidity contracts; chain-specific settings are supplied by environment configuration.
+A computer-based exam where nobody can see the paper before it starts. That includes the exam authority, any setter, the storage operator, the custodians and the exam centers. Nobody picks which questions appear, and every step can be checked by anyone afterwards.
 
-For the requirements and acceptance criteria, see [`docs/SRS.md`](docs/SRS.md). For a short status and workflow summary, see [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md). The detailed architecture baseline is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Paper generation uses the specified commit/reveal seed, Fisher–Yates entity-pool shuffle, and exact shift slicing. Each question has its own AES key, split into five Shamir shares with a 3-of-5 reconstruction threshold. Each share is sealed to its holder's X25519 public key and published in an on-chain event. This prototype has no exam-wide master key and intentionally differs from the original SRS key-wrapping design.
+- **Two locks on every question.** A time-lock opens only when the public drand randomness network publishes the shift's start round. Custodian keys open only when `t` of `n` independent custodians release their shares, and they release only after seeing that same round. Either group cheating alone gets nothing before T.
+- **The paper exists only at T.** The start round's beacon value also picks which questions appear, from a pool about twice the paper's size. Setters know their own questions, never which ones were picked.
+- **Centers hold no keys.** Custodians seal key shares to one candidate terminal's session key. Each candidate gets their own question and option order, and a watermark of their roll number and terminal.
+- **Responses are frozen before answers exist.** Centers post a hash of every signed answer sheet before the answer key can be opened, so no one can change a response after learning the answers.
+- **The chain is the referee.** A Solidity contract stores only commitments, roots and verified drand beacons. Its clock is drand, not block time.
 
-## Prerequisites
+## Run it
 
-- Node.js 20 or later
-- npm 9 or later
-- Docker Compose
-- A Cosmos EVM RPC endpoint for target-chain integration (Hardhat is used locally)
-
-## Local setup
-
-```sh
-npm install
-cp .env.example .env
-docker compose up -d
-npm run dev:chain
-```
-
-In a second terminal, deploy the contract to the local Hardhat node:
+You need Node 24+, pnpm, and [Foundry](https://getfoundry.sh) (`anvil`, `forge`).
 
 ```sh
-npm run deploy:local
+pnpm install
+pnpm build          # contracts -> ABI, portal, exam client
+pnpm dev            # local demo: chain, beacon, store, 3 custodians, 2 halls, portal
 ```
 
-Copy the printed address into `CONTRACT_ADDRESS` in `.env`. Start the API with `npm run dev:api`; the admin portal is available with `npm run dev:admin`. Submitter and center portals run with `npm run dev:submitter` and `npm run dev:center`. Register five committee wallets, then have each member run `npm run keyholder:gen-key` and provide its public key to the admin. Register those five X25519 public keys in the same order as the committee. Start five key-holder processes on ports 3001–3005, setting `KEY_SHARE_INDEX=1` through `5`, the matching committee signer key, and the generated private-key file path.
+| Flag                                          | Effect                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| `--besu`                                      | Runs four Hyperledger Besu QBFT validators instead of Anvil                   |
+| `--quicknet`                                  | Uses the real League of Entropy drand network instead of the local dev beacon |
+| `--seal-in 180 --start-gap 60 --duration 600` | Timeline in seconds                                                           |
+| `--manual-setters 0,3`                        | Setters to leave for the portal                                               |
+| `--no-allocate`                               | Skip demo candidates, to allocate from the portal instead                     |
+| `--offset 100`                                | Shifts every port, to run several stacks side by side                         |
 
-The API creates the chain-and-contract-scoped bucket when it starts. Local development uses RustFS as the S3-compatible file store for encrypted question ciphertexts; it does not store the shares. Its S3 API is at `http://127.0.0.1:9000` and console at `http://127.0.0.1:9001`. The admin portal configures roles, shifts, centers, and randomness deadlines. A center generates a local X25519 key file; give its public half to the admin for registration and keep the private file at the center. Submitters upload an exactly-50-question JSON array; encrypted artifacts are staged in browser IndexedDB to support retries. The API accepts ciphertext uploads with a wallet signature and checks hashes and quota. The submitter puts five encrypted shares in the same on-chain transaction as each question commitment.
+## Check it
 
-The center portal downloads ciphertexts before release and verifies their on-chain hashes. In its shift window, it contacts the five holders; each returns its own share encrypted to the center and signed by its committee wallet. The center accepts any three valid responses, reconstructs each question key locally, checks plaintext commitments, and exports printable HTML without answers plus `paper.json` with the center-specific order.
+```sh
+pnpm test
+pnpm e2e            # the whole protocol on real processes, about 3 minutes
+pnpm -C apps/cli e2e:besu   # the same on four Besu QBFT validators
+pnpm eplp audit     # independent audit of the running demo from public data
+```
 
-Committee operations use `npm run committee:commit` and `npm run committee:reveal`; the secret is saved under `.keys/` and is never printed. The entropy relayer waits for the on-chain reveal deadline before reading its provider. Use `npm run relayer:run -- --provider local` for development, which emits an `INSECURE_DEV` warning, or configure the ANU endpoint and API key. After the exam is finalized, `npm run audit` replays the chain, asks holders for audit shares, reconstructs question keys, and checks ciphertext hashes and plaintext commitments.
+The end-to-end run asserts each claim, including the refusals. A candidate from another hall cannot check in. Every custodian refuses a key request before the start beacon. A second terminal needs a proctor transfer, and the replaced session cannot submit. Late entry is refused. Shift papers are disjoint. Scores match what was answered. All audit checks pass.
 
-The target Cosmos EVM profile starts from `.env.cosmos.example`: copy it to `.env`, then set the chain RPC/WebSocket endpoints and funded `COSMOS_DEPLOYER_PRIVATE_KEY`. Deploy with `npm run deploy:cosmos`. The script records the address, chain ID, timestamp, and transaction hash in `packages/contracts/deployments/<chain-id>.json`. Set `CONTRACT_ADDRESS` to that address for the application services. Do not reuse development private keys outside a local environment.
+## Layout
 
-## Workspace map
+| Path                 | What it is                                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/contracts` | `ExamRegistry.sol` and `DrandBls.sol`, Foundry tests                               |
+| `packages/protocol`  | Everything else, shared by browser and services: sealing, time-lock, HPKE, Shamir, selection, terminal session, scoring, audit |
+| `packages/node-kit`  | Small runtime helpers for the services                                                                                         |
+| `apps/beacon`        | Local drand stand-in with the real scheme and HTTP API                                                                         |
+| `apps/store`         | Public store; accepts a document only if it matches an on-chain root                                                           |
+| `apps/custodian`     | Holds one share per question, acknowledges batches, posts beacons, releases at T                                               |
+| `apps/gateway`       | One per exam center: prefetch, check-in, key relay, answer backup, center postings, serves the exam client                     |
+| `apps/exam-client`   | Candidate terminal (kiosk) and proctor console                                                                                 |
+| `apps/portal`        | Public status, setter submission, authority actions, candidate results, audit                                                  |
+| `apps/cli`           | Dev launcher, end-to-end test, operator commands, Besu runner                                                                  |
 
-- `packages/contracts`: Solidity contract and EVM deployment configuration
-- `packages/crypto`: shared encryption, commitments, and deterministic paper algorithms
-- `packages/shared`: validated configuration and shared EVM/API types
-- `apps/api`: web workflow API
-- `apps/key-service`: isolated timed key-release service
-- `apps/admin-web`, `apps/submitter-web`, `apps/center-web`: user-facing portals
-- `apps/*-cli`: operational and audit command-line clients
+## Exam terminals on a LAN
 
-Implementation decisions and target-chain deployment details belong in `docs/DECISIONS.md` and `docs/DEPLOYMENT.md`.
+WebCrypto only runs in a secure context. On one machine, `127.0.0.1` already counts as secure. For terminals reaching a gateway over plain HTTP on a LAN, launch Chrome in kiosk mode with `--unsafely-treat-insecure-origin-as-secure=http://<gateway-ip>:8800`, or put the gateway behind TLS.

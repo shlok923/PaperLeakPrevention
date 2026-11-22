@@ -1,0 +1,22 @@
+{
+    "name": "@eplp/node-kit",
+    "private": true,
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./root": "./src/root.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc -p ."
+    },
+    "dependencies": {
+        "@eplp/protocol": "workspace:*",
+        "@hono/node-server": "^2.1.11",
+        "hono": "^4.13.19",
+        "viem": "^2.58.2"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.6",
+        "typescript": "^7.0.2"
+    }
+}
