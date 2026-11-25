@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "commit": "tsx src/index.ts commit", "reveal": "tsx src/index.ts reveal", "gen-key": "tsx src/index.ts gen-share-key", "build": "tsc --noEmit", "typecheck": "tsc --noEmit" },
+  "scripts": { "commit": "tsx src/index.ts commit", "reveal": "tsx src/index.ts reveal", "gen-key": "tsx src/index.ts gen-share-key", "demo:local": "tsx src/local-demo.ts", "build": "tsc --noEmit", "typecheck": "tsc --noEmit" },
   "dependencies": { "@eplps/crypto": "0.1.0", "@eplps/shared": "0.1.0", "commander": "^13.1.0", "dotenv": "^16.4.7", "ethers": "^6.13.5" },
   "devDependencies": { "tsx": "^4.19.3", "typescript": "^5.8.3" }
 }

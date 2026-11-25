@@ -24,7 +24,8 @@
     "dev:key-service": "npm run dev --workspace=@eplps/key-service",
     "dev:admin": "npm run dev --workspace=@eplps/admin-web",
     "dev:submitter": "npm run dev --workspace=@eplps/submitter-web",
-    "dev:center": "npm run dev --workspace=@eplps/center-web"
+    "dev:center": "npm run dev --workspace=@eplps/center-web",
+    "demo:local": "npm run build --workspace=@eplps/contracts && npm run demo:local --workspace=@eplps/committee-cli"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

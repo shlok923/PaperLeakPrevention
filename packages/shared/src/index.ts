@@ -35,7 +35,7 @@ export const EXAM_MANAGER_ABI = [
   "function keyCloseAfter() view returns (uint64)",
   "function seed() view returns (bytes32)",
   "function getSubmission(uint16 id) view returns ((address submitter,uint8 subject,uint8 entity,uint64 submittedAt,bytes32 ciphertextHash,bytes32[5] keyShareHashes,bytes32 plaintextCommitment,bytes16 objectId))",
-  "function submitQuestion(bytes32 ciphertextHash,bytes32[5] keyShareHashes,bytes32 plaintextCommitment,bytes16 objectId,bytes[5] encryptedShares) returns (uint16)",
+  "function submitQuestions((bytes32 ciphertextHash,bytes32[5] keyShareHashes,bytes32 plaintextCommitment,bytes16 objectId,bytes[5] encryptedShares)[] questions) returns (uint16 firstId)",
   "event QuestionSubmitted(uint16 indexed id,address indexed submitter,uint8 subject,uint8 entity,bytes32 ciphertextHash,bytes16 objectId)",
   "event KeySharePublished(uint16 indexed questionId,uint8 indexed shareIndex,bytes encryptedShare)",
   "function getShiftQuestions(uint8 shiftId) view returns (uint16[75])",

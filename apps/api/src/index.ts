@@ -1,9 +1,10 @@
 import { fileURLToPath } from "node:url";
+import { randomBytes as nodeRandomBytes } from "node:crypto";
 import path from "node:path";
 import dotenv from "dotenv";
 import Fastify from "fastify";
 import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { JsonRpcProvider, getAddress, keccak256, verifyMessage } from "ethers";
+import { AbiCoder, JsonRpcProvider, getAddress, keccak256, verifyMessage } from "ethers";
 import { createExamManager, loadRuntimeConfig } from "@eplps/shared";
 import { z } from "zod";
 
@@ -30,6 +31,7 @@ const s3 = new S3Client({
   credentials: { accessKeyId: storageConfig.accessKeyId, secretAccessKey: storageConfig.secretAccessKey },
 });
 const app = Fastify({ logger: true, bodyLimit: 2_200_000 });
+const uploadBatches = new Map<string, { submitter: string; objects: Map<string, string>; expiresAt: number }>();
 
 async function ensureBucket(): Promise<void> {
   try {
@@ -41,11 +43,17 @@ async function ensureBucket(): Promise<void> {
   }
 }
 
-const uploadSchema = z.object({
-  objectId: z.string().regex(/^0x[0-9a-fA-F]{32}$/),
-  ciphertextHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+const uploadBatchAuthorizationSchema = z.object({
+  objectIds: z.array(z.string().regex(/^0x[0-9a-fA-F]{32}$/)).length(50),
+  ciphertextHashes: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/)).length(50),
   timestamp: z.number().int().positive(),
   signature: z.string().regex(/^0x[0-9a-fA-F]+$/),
+}).strict();
+
+const uploadSchema = z.object({
+  uploadToken: z.string().regex(/^[0-9a-f]{64}$/),
+  objectId: z.string().regex(/^0x[0-9a-fA-F]{32}$/),
+  ciphertextHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   dataBase64: z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
 }).strict();
 
@@ -95,6 +103,59 @@ app.get("/v1/shifts", async () => {
   return { shifts };
 });
 
+app.post<{ Params: { address: string } }>("/v1/submitters/:address/uploads/authorize", async (request, reply) => {
+  let submitter: string;
+  try {
+    submitter = getAddress(request.params.address);
+  } catch {
+    return reply.code(400).send({ error: "invalid_submitter_address" });
+  }
+  const parsed = uploadBatchAuthorizationSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: "invalid_upload_batch_authorization" });
+  const body = parsed.data;
+  if (Math.abs(Math.floor(Date.now() / 1000) - body.timestamp) > 120) {
+    return reply.code(400).send({ error: "stale_upload_signature" });
+  }
+  const objectIds = body.objectIds.map((id) => id.toLowerCase());
+  if (new Set(objectIds).size !== objectIds.length) {
+    return reply.code(400).send({ error: "duplicate_object_id_in_batch" });
+  }
+  const batchHash = keccak256(AbiCoder.defaultAbiCoder().encode(
+    ["bytes16[]", "bytes32[]"],
+    [body.objectIds, body.ciphertextHashes],
+  ));
+  const uploadMessage = `EPLPS-UPLOAD-BATCH:${runtime.chainId}:${runtime.contractAddress}:${submitter}:${batchHash}:${body.timestamp}`;
+  let signerAddress: string;
+  try {
+    signerAddress = getAddress(verifyMessage(uploadMessage, body.signature));
+  } catch {
+    return reply.code(403).send({ error: "invalid_submitter_signature" });
+  }
+  if (signerAddress !== submitter) {
+    return reply.code(403).send({ error: "invalid_submitter_signature" });
+  }
+  const [phase, registered, questionCount] = await Promise.all([
+    contract.getFunction("phase")(),
+    contract.getFunction("isSubmitter")(submitter),
+    contract.getFunction("submitterQuestionCount")(submitter),
+  ]);
+  if (Number(phase) !== 1 || !registered || Number(questionCount) !== 0) {
+    return reply.code(403).send({ error: "submitter_not_eligible" });
+  }
+
+  const now = Date.now();
+  for (const [token, authorization] of uploadBatches) {
+    if (authorization.expiresAt <= now) uploadBatches.delete(token);
+  }
+  const uploadToken = nodeRandomBytes(32).toString("hex");
+  const objects = new Map<string, string>();
+  body.objectIds.forEach((objectId, index) => {
+    objects.set(objectId.toLowerCase(), body.ciphertextHashes[index]!.toLowerCase());
+  });
+  uploadBatches.set(uploadToken, { submitter, objects, expiresAt: now + 30 * 60 * 1000 });
+  return reply.send({ uploadToken, expiresInSeconds: 1800 });
+});
+
 app.post<{ Params: { address: string } }>("/v1/submitters/:address/objects", async (request, reply) => {
   let submitter: string;
   try {
@@ -105,19 +166,20 @@ app.post<{ Params: { address: string } }>("/v1/submitters/:address/objects", asy
   const parsed = uploadSchema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: "invalid_upload_request" });
   const body = parsed.data;
-  if (Math.abs(Math.floor(Date.now() / 1000) - body.timestamp) > 120) {
-    return reply.code(400).send({ error: "stale_upload_signature" });
+  const authorization = uploadBatches.get(body.uploadToken);
+  if (!authorization || authorization.expiresAt <= Date.now() || authorization.submitter !== submitter) {
+    return reply.code(403).send({ error: "upload_batch_not_authorized" });
   }
-  const uploadMessage = `EPLPS-UPLOAD:${runtime.chainId}:${runtime.contractAddress}:${submitter}:${body.objectId}:${body.ciphertextHash}:${body.timestamp}`;
-  if (getAddress(verifyMessage(uploadMessage, body.signature)) !== submitter) {
-    return reply.code(403).send({ error: "invalid_submitter_signature" });
+  const expectedHash = authorization.objects.get(body.objectId.toLowerCase());
+  if (!expectedHash || expectedHash !== body.ciphertextHash.toLowerCase()) {
+    return reply.code(403).send({ error: "object_not_in_authorized_batch" });
   }
   const [phase, registered, questionCount] = await Promise.all([
     contract.getFunction("phase")(),
     contract.getFunction("isSubmitter")(submitter),
     contract.getFunction("submitterQuestionCount")(submitter),
   ]);
-  if (Number(phase) !== 1 || !registered || Number(questionCount) >= 50) {
+  if (Number(phase) !== 1 || !registered || Number(questionCount) !== 0) {
     return reply.code(403).send({ error: "submitter_not_eligible" });
   }
   const bytes = Buffer.from(body.dataBase64, "base64");

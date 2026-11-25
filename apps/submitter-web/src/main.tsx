@@ -2,11 +2,11 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserProvider,
+  AbiCoder,
   Contract,
   getAddress,
   keccak256,
   toUtf8Bytes,
-  zeroPadValue,
 } from "ethers";
 import {
   canonicalJson,
@@ -21,7 +21,6 @@ import "./style.css";
 
 type NetworkInfo = { chainId: number; contract: string };
 type StoredArtifact = EncryptedQuestion & { fingerprint: string; encryptedShares: Uint8Array[] };
-type SubmissionEvent = { ciphertextHash: string };
 type InjectedWallet = ConstructorParameters<typeof BrowserProvider>[0] & {
   on?: (event: "accountsChanged", listener: (accounts: string[]) => void) => void;
   removeListener?: (event: "accountsChanged", listener: (accounts: string[]) => void) => void;
@@ -205,18 +204,14 @@ function SubmitterApp() {
     setStatus("50 questions passed schema validation. Question text remains in this browser until submitted.");
   }
 
-  async function uploadArtifact(artifact: StoredArtifact, signer: Awaited<ReturnType<BrowserProvider["getSigner"]>>): Promise<void> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const uploadMessage = `EPLPS-UPLOAD:${Number((await provider!.getNetwork()).chainId)}:${await contract!.getAddress()}:${account}:${artifact.objectId}:${artifact.ciphertextHash}:${timestamp}`;
-    const signature = await signer.signMessage(uploadMessage);
+async function uploadArtifact(artifact: StoredArtifact, uploadToken: string): Promise<void> {
     const response = await fetch(`${API_BASE}/v1/submitters/${account}/objects`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        uploadToken,
         objectId: artifact.objectId,
         ciphertextHash: artifact.ciphertextHash,
-        timestamp,
-        signature,
         dataBase64: bytesToBase64(artifact.blob),
       }),
     });
@@ -238,28 +233,28 @@ function SubmitterApp() {
         throw new Error(`Every question in this file must be for your registered subject (${expectedSubject})`);
       }
       const keyCount = Number(await contract.getFunction("submitterQuestionCount")(account));
-      if (keyCount > 50) throw new Error("On-chain question quota is invalid");
+      if (keyCount === 50) {
+        setQuotaUsed(50);
+        setStatus("This submitter's complete 50-question batch is already committed on chain.");
+        return;
+      }
+      if (keyCount !== 0) throw new Error("This wallet has a partial legacy submission. The batch contract requires a fresh deployment or admin recovery.");
       setQuotaUsed(keyCount);
+      const chainId = Number((await provider.getNetwork()).chainId);
+      const contractAddress = (await contract.getAddress()).toLowerCase();
       const holderPublicKeys = await Promise.all(Array.from({ length: 5 }, async (_, index) =>
         String(await contract.getFunction("keyHolderPublicKeys")(index))));
-      const event = contract.interface.getEvent("QuestionSubmitted");
-      if (!event) throw new Error("QuestionSubmitted event is missing from the shared contract ABI");
-      const logs = await provider.getLogs({
-        address: await contract.getAddress(),
-        fromBlock: 0,
-        topics: [event.topicHash, null, zeroPadValue(account, 32)],
-      });
-      const committedHashes = new Set<string>();
-      for (const log of logs) {
-        const parsed = contract.interface.parseLog({ topics: [...log.topics], data: log.data });
-        if (parsed?.name === "QuestionSubmitted") committedHashes.add(String(parsed.args.ciphertextHash).toLowerCase());
-      }
       const signer = await provider.getSigner(account);
-      let completed = keyCount;
-
+      const artifacts: StoredArtifact[] = [];
       for (let index = 0; index < payloads.length; index += 1) {
         const payload = payloads[index]!;
-        const fingerprint = keccak256(toUtf8Bytes(canonicalJson(payload)));
+        const fingerprint = keccak256(toUtf8Bytes(canonicalJson({
+          chainId,
+          contract: contractAddress,
+          submitter: account.toLowerCase(),
+          payload,
+          batchIndex: index,
+        })));
         let artifact = await findArtifact(fingerprint);
         if (!artifact) {
           const encrypted = await encryptQuestion(payload);
@@ -272,30 +267,49 @@ function SubmitterApp() {
             sealShare(holderPublicKeys[shareIndex]!, share.data)));
           await saveArtifact(artifact);
         }
-        if (committedHashes.has(artifact.ciphertextHash.toLowerCase())) {
-          setStatus(`Resumed batch · ${Math.min(index + 1, 50)} of 50 checked · ${completed} questions already committed.`);
-          continue;
-        }
-        if (completed >= 50) throw new Error("This submitter has reached the 50-question quota");
-
-        setStatus(`Encrypting and uploading question ${index + 1} of 50…`);
-        await uploadArtifact(artifact, signer);
-        setStatus(`Encrypted artifacts uploaded · submitting commitment ${index + 1} of 50…`);
-        const tx = await contract.getFunction("submitQuestion")(
-          artifact.ciphertextHash,
-          artifact.keyShareHashes,
-          artifact.plaintextCommitment,
-          artifact.objectId,
-          artifact.encryptedShares,
-        );
-        const receipt = await tx.wait();
-        if (!receipt || receipt.status !== 1) throw new Error(`Question ${index + 1} commitment failed`);
-        committedHashes.add(artifact.ciphertextHash.toLowerCase());
-        completed += 1;
-        setQuotaUsed(completed);
-        setStatus(`Committed ${completed} of 50 questions · transaction ${receipt.hash}`);
+        artifacts.push(artifact);
       }
-      setStatus(`Submission complete or resumed. On-chain quota: ${completed} of 50.`);
+
+      const objectIds = artifacts.map((artifact) => artifact.objectId);
+      const ciphertextHashes = artifacts.map((artifact) => artifact.ciphertextHash);
+      const batchHash = keccak256(AbiCoder.defaultAbiCoder().encode(
+        ["bytes16[]", "bytes32[]"],
+        [objectIds, ciphertextHashes],
+      ));
+      const timestamp = Math.floor(Date.now() / 1000);
+      const uploadMessage = `EPLPS-UPLOAD-BATCH:${chainId}:${await contract.getAddress()}:${account}:${batchHash}:${timestamp}`;
+      const signature = await signer.signMessage(uploadMessage);
+      const authorizationResponse = await fetch(`${API_BASE}/v1/submitters/${account}/uploads/authorize`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ objectIds, ciphertextHashes, timestamp, signature }),
+      });
+      if (!authorizationResponse.ok) {
+        const result = await authorizationResponse.json().catch(() => ({})) as { error?: string };
+        throw new Error(result.error ?? `Batch upload authorization failed (${authorizationResponse.status})`);
+      }
+      const { uploadToken } = await authorizationResponse.json() as { uploadToken: string };
+
+      for (let index = 0; index < artifacts.length; index += 1) {
+        setStatus(`Uploading encrypted question files · ${index + 1} of ${artifacts.length}…`);
+        await uploadArtifact(artifacts[index]!, uploadToken);
+      }
+
+      setStatus("All encrypted files are stored. Confirm the single 50-question batch transaction in your wallet…");
+      const batch = artifacts.map((artifact) => [
+        artifact.ciphertextHash,
+        artifact.keyShareHashes,
+        artifact.plaintextCommitment,
+        artifact.objectId,
+        artifact.encryptedShares,
+      ]);
+      const tx = await contract.getFunction("submitQuestions")(batch);
+      const receipt = await tx.wait();
+      if (!receipt || receipt.status !== 1) throw new Error("The 50-question batch transaction failed");
+      const completed = Number(await contract.getFunction("submitterQuestionCount")(account));
+      if (completed !== 50) throw new Error(`Batch receipt confirmed but on-chain quota is ${completed}, expected 50`);
+      setQuotaUsed(completed);
+      setStatus(`Committed all 50 questions in one transaction · ${receipt.hash}`);
     } finally {
       setBusy(false);
     }
@@ -314,7 +328,7 @@ function SubmitterApp() {
     {!account ? <section className="card"><h2>Connect submitter wallet</h2><p>Your registered wallet determines your subject and entity. The contract enforces a maximum of 50 questions.</p><button onClick={() => void run(connectWallet)}>Connect wallet</button></section> : <>
       <section className="card summary"><div><span>Submitter wallet</span><strong>{account}</strong></div><div><span>Subject</span><strong>{["Physics", "Chemistry", "Maths"][subject!]}</strong></div><div><span>Entity</span><strong>{entity! + 1}</strong></div><div><span>On-chain quota</span><strong>{quotaUsed} / 50</strong></div><button disabled={busy} onClick={() => void run(switchWallet)}>Switch wallet</button><button disabled={busy} onClick={disconnectWallet}>Disconnect</button></section>
       <section className="card"><h2>Question package</h2><p>Choose a JSON array of exactly 50 single-correct MCQs. The interface never displays question content.</p><input type="file" accept="application/json,.json" onChange={(event) => void run(() => loadQuestions(event.target.files?.[0]))} />{payloads.length > 0 && <p className="success">{fileName} · {payloads.length} questions validated.</p>}</section>
-      <section className="card"><h2>Encrypt and submit</h2><p>Question ciphertext is uploaded to object storage. Five Shamir shares are encrypted to their holders and submitted with the on-chain commitment.</p><button disabled={busy || payloads.length !== 50 || quotaUsed === 50} onClick={() => void run(submitBatch)}>{busy ? "Submitting…" : "Submit or resume 50 questions"}</button></section>
+      <section className="card"><h2>Encrypt and submit</h2><p>Question ciphertext is uploaded to object storage. One wallet signature authorizes all 50 uploads, followed by one transaction containing all five holder-encrypted Shamir shares per question.</p><button disabled={busy || payloads.length !== 50 || quotaUsed === 50} onClick={() => void run(submitBatch)}>{busy ? "Submitting…" : "Submit 50 questions"}</button></section>
     </>}
     <p className="status" role="status">{status}</p>
   </main>;

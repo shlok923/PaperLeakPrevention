@@ -36,6 +36,14 @@ contract ExamManager {
         bytes32 x25519PubKey;
     }
 
+    struct QuestionInput {
+        bytes32 ciphertextHash;
+        bytes32[5] keyShareHashes;
+        bytes32 plaintextCommitment;
+        bytes16 objectId;
+        bytes[5] encryptedShares;
+    }
+
     uint8 public constant SUBJECTS = 3;
     uint8 public constant ENTITIES = 3;
     uint8 public constant SHIFTS = 6;
@@ -236,52 +244,54 @@ contract ExamManager {
         emit SubmissionsOpened();
     }
 
-    /// @notice Commits an encrypted question's hashes and object ID; question data remains off-chain.
-    /// @return id Global zero-based question ID.
-    function submitQuestion(
-        bytes32 ciphertextHash,
-        bytes32[5] calldata keyShareHashes,
-        bytes32 plaintextCommitment,
-        bytes16 objectId,
-        bytes[5] calldata encryptedShares
-    )
-        external
-        returns (uint16 id)
-    {
+    /// @notice Commits one submitter's complete 50-question batch atomically; question data remains off-chain.
+    /// @return firstId Global zero-based ID assigned to the first question in this batch.
+    function submitQuestions(QuestionInput[] calldata questions) external returns (uint16 firstId) {
         if (phase != Phase.Submission) revert WrongPhase();
         if (!isSubmitter[msg.sender]) revert InvalidAddress();
-        if (submitterQuestionCount[msg.sender] >= QUESTIONS_PER_SUBMITTER) revert QuotaExceeded();
-        if (
-            ciphertextHash == bytes32(0) || plaintextCommitment == bytes32(0)
-                || objectId == bytes16(0) || _usedObjectIds[objectId]
-        ) revert InvalidSubmission();
-        for (uint256 i = 0; i < keyShareHashes.length; i += 1) {
-            if (keyShareHashes[i] == bytes32(0) || encryptedShares[i].length != 80) revert InvalidSubmission();
-        }
-        if (_submissions.length >= MAX_QUESTIONS) revert QuotaExceeded();
+        if (submitterQuestionCount[msg.sender] != 0) revert QuotaExceeded();
+        if (questions.length != QUESTIONS_PER_SUBMITTER) revert InvalidSubmission();
+        if (_submissions.length + questions.length > MAX_QUESTIONS) revert QuotaExceeded();
 
-        id = uint16(_submissions.length);
-        uint8 subject = submitterSubject[msg.sender];
-        uint8 entity = submitterEntity[msg.sender];
+        firstId = uint16(_submissions.length);
+        for (uint256 i = 0; i < questions.length; i += 1) {
+            _recordQuestion(msg.sender, questions[i]);
+        }
+    }
+
+    function _recordQuestion(address submitter, QuestionInput calldata question) private {
+        if (
+            question.ciphertextHash == bytes32(0) || question.plaintextCommitment == bytes32(0)
+                || question.objectId == bytes16(0) || _usedObjectIds[question.objectId]
+        ) revert InvalidSubmission();
+        for (uint256 i = 0; i < COMMITTEE_SIZE; i += 1) {
+            if (question.keyShareHashes[i] == bytes32(0) || question.encryptedShares[i].length != 80) {
+                revert InvalidSubmission();
+            }
+        }
+
+        uint16 id = uint16(_submissions.length);
+        uint8 subject = submitterSubject[submitter];
+        uint8 entity = submitterEntity[submitter];
         _submissions.push(
             Submission({
-                submitter: msg.sender,
+                submitter: submitter,
                 subject: subject,
                 entity: entity,
                 submittedAt: uint64(block.timestamp),
-                ciphertextHash: ciphertextHash,
-                keyShareHashes: keyShareHashes,
-                plaintextCommitment: plaintextCommitment,
-                objectId: objectId
+                ciphertextHash: question.ciphertextHash,
+                keyShareHashes: question.keyShareHashes,
+                plaintextCommitment: question.plaintextCommitment,
+                objectId: question.objectId
             })
         );
         _pools[_poolIndex(subject, entity)].push(id);
-        _usedObjectIds[objectId] = true;
-        submitterQuestionCount[msg.sender] += 1;
+        _usedObjectIds[question.objectId] = true;
+        submitterQuestionCount[submitter] += 1;
         totalSubmissions += 1;
-        emit QuestionSubmitted(id, msg.sender, subject, entity, ciphertextHash, objectId);
+        emit QuestionSubmitted(id, submitter, subject, entity, question.ciphertextHash, question.objectId);
         for (uint8 shareIndex = 1; shareIndex <= COMMITTEE_SIZE; shareIndex += 1) {
-            emit KeySharePublished(id, shareIndex, encryptedShares[shareIndex - 1]);
+            emit KeySharePublished(id, shareIndex, question.encryptedShares[shareIndex - 1]);
         }
     }
 

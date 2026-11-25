@@ -8,7 +8,7 @@ The Exam Paper Leak-Prevention System collects questions, creates exam papers fr
 
 - **Cosmos EVM contract:** records roles, schedules, question commitments, encrypted key shares, paper sets, and key requests.
 - **RustFS:** a local S3-compatible file store for the larger encrypted question files. It does not store the key shares. The API uses an S3-compatible interface to upload and retrieve those files.
-- **Submitter portal:** lets registered submitters encrypt and submit a package of 50 questions.
+- **Submitter portal:** lets registered submitters encrypt and submit a package of 50 questions. One wallet signature authorizes the ciphertext uploads, followed by one batch transaction for the full package.
 - **Admin portal:** configures submitters, committee members, holder keys, centers, shifts, and exam timing.
 - **Five key-holder services:** each holds one share index and releases its shares when an eligible center requests them during its release window.
 - **Center portal:** downloads encrypted questions early, requests shares at the allowed time, and builds the paper in the browser.
@@ -17,7 +17,7 @@ The Exam Paper Leak-Prevention System collects questions, creates exam papers fr
 ```text
 Submitter portal ── encrypted question files ──> RustFS
        │
-       └── commitments + five encrypted shares ──> Cosmos EVM
+       └── one batch transaction: commitments + five encrypted shares per question ──> Cosmos EVM
 
 Center portal ── ciphertext files ──> RustFS
        │

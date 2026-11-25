@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserProvider,
@@ -42,6 +42,10 @@ type KeyPackage = {
 };
 type CenterKeyFile = { publicKey: string; privateKey: string };
 type DecryptedQuestion = ReturnType<typeof validatePayload> & { questionId: number };
+type InjectedWallet = ConstructorParameters<typeof BrowserProvider>[0] & {
+  on?: (event: "accountsChanged", listener: (accounts: string[]) => void) => void;
+  removeListener?: (event: "accountsChanged", listener: (accounts: string[]) => void) => void;
+};
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 const KEY_HOLDER_PATHS = [1, 2, 3, 4, 5].map((index) => `/key-holder-${index}`);
@@ -62,6 +66,14 @@ function downloadFile(name: string, type: string, contents: string): void {
 function base64ToBytes(value: string): Uint8Array {
   const raw = atob(value);
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+
+function formatDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds} sec`;
+  if (seconds === 0) return `${minutes} min`;
+  return `${minutes} min ${seconds} sec`;
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -98,11 +110,96 @@ function CenterApp() {
   const [generatedKey, setGeneratedKey] = useState<CenterKeyFile | null>(null);
   const [ciphertexts, setCiphertexts] = useState<Map<number, Uint8Array>>(new Map());
   const [paper, setPaper] = useState<DecryptedQuestion[] | null>(null);
+  const [chainTimestamp, setChainTimestamp] = useState<number | null>(null);
+  const [releaseWindow, setReleaseWindow] = useState<{ opensAt: number; closesAt: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("Connect your registered center wallet to begin.");
 
+  useEffect(() => {
+    if (!manager || !manifest || !signer) {
+      setChainTimestamp(null);
+      setReleaseWindow(null);
+      return;
+    }
+    let active = true;
+    const updateChainTime = async () => {
+      const block = await signer.provider.getBlock("latest");
+      if (active && block) setChainTimestamp(block.timestamp);
+    };
+    void (async () => {
+      try {
+        const [shift, openBefore, closeAfter] = await Promise.all([
+          manager.getFunction("shifts")(manifest.shiftId),
+          manager.getFunction("keyOpenBefore")(),
+          manager.getFunction("keyCloseAfter")(),
+        ]);
+        if (active) {
+          setReleaseWindow({
+            opensAt: Number(shift.startTime) - Number(openBefore),
+            closesAt: Number(shift.startTime) + Number(closeAfter),
+          });
+        }
+        await updateChainTime();
+      } catch {
+        if (active) setReleaseWindow(null);
+      }
+    })();
+    const timer = window.setInterval(() => void updateChainTime().catch(() => undefined), 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [manager, manifest, signer]);
+
+  useEffect(() => {
+    const ethereum = (window as Window & { ethereum?: InjectedWallet }).ethereum;
+    if (!ethereum?.on) return;
+    const handleAccountsChanged = (accounts: string[]) => {
+      setSigner(null);
+      setManager(null);
+      setAccount("");
+      setManifest(null);
+      setCenterKey(null);
+      setCiphertexts(new Map());
+      setPaper(null);
+      setChainTimestamp(null);
+      setReleaseWindow(null);
+      setStatus(accounts.length
+        ? "Wallet account changed. Connect the selected registered center wallet."
+        : "Wallet disconnected. Connect a registered center wallet to continue.");
+    };
+    ethereum.on("accountsChanged", handleAccountsChanged);
+    return () => ethereum.removeListener?.("accountsChanged", handleAccountsChanged);
+  }, []);
+
+  function disconnectWallet(): void {
+    setSigner(null);
+    setManager(null);
+    setAccount("");
+    setManifest(null);
+    setCenterKey(null);
+    setCiphertexts(new Map());
+    setPaper(null);
+    setChainTimestamp(null);
+    setReleaseWindow(null);
+    setStatus("Disconnected from this center session. Select another wallet in MetaMask, then connect again.");
+  }
+
+  async function switchWallet(): Promise<void> {
+    const ethereum = (window as Window & { ethereum?: InjectedWallet }).ethereum;
+    if (!ethereum) throw new Error("No EVM wallet was found in this browser");
+    const browserProvider = new BrowserProvider(ethereum);
+    try {
+      await browserProvider.send("wallet_revokePermissions", [{ eth_accounts: {} }]);
+    } catch {
+      await browserProvider.send("wallet_requestPermissions", [{ eth_accounts: {} }]);
+    }
+    await browserProvider.send("eth_requestAccounts", []);
+    await connectWallet();
+  }
+
   async function connectWallet(): Promise<void> {
-    const ethereum = (window as Window & { ethereum?: ConstructorParameters<typeof BrowserProvider>[0] }).ethereum;
+    const ethereum = (window as Window & { ethereum?: InjectedWallet }).ethereum;
     if (!ethereum) throw new Error("No EVM wallet was found in this browser");
     const browserProvider = new BrowserProvider(ethereum);
     await browserProvider.send("eth_requestAccounts", []);
@@ -173,10 +270,18 @@ function CenterApp() {
       const shiftState = await manager.getFunction("shifts")(manifest.shiftId);
       const keyOpenBefore = Number(await manager.getFunction("keyOpenBefore")());
       const keyCloseAfter = Number(await manager.getFunction("keyCloseAfter")());
-      const now = Math.floor(Date.now() / 1000);
+      const latestBlock = await signer.provider.getBlock("latest");
+      if (!latestBlock) throw new Error("Could not read the latest chain timestamp");
+      const now = latestBlock.timestamp;
       const opensAt = Number(shiftState.startTime) - keyOpenBefore;
       const closesAt = Number(shiftState.startTime) + keyCloseAfter;
-      if (now < opensAt || now > closesAt) throw new Error("This shift is outside its key-release window");
+      if (now < opensAt || now > closesAt) {
+        const formatTime = (timestamp: number) => new Date(timestamp * 1000).toISOString();
+        throw new Error(
+          `This shift is outside its key-release window. Chain time: ${formatTime(now)}; `
+          + `window: ${formatTime(opensAt)} to ${formatTime(closesAt)} (UTC).`,
+        );
+      }
 
       const transaction = await manager.getFunction("requestKeys")();
       const receipt = await transaction.wait();
@@ -275,7 +380,13 @@ function CenterApp() {
     <header><p className="eyebrow">EPLPS · EXAM CENTER</p><h1>Prepare your exam paper</h1><p>Verify encrypted materials early, then request your shift keys during the release window.</p></header>
     <section className="card"><h2>Center key setup</h2><p>Generate an X25519 key pair on this device. Give the public key to the administrator for registration and keep the downloaded private key file secure.</p><button disabled={busy} onClick={() => void run(generateCenterKey)}>Generate center key file</button>{generatedKey && <p className="public-key"><strong>Public key for registration</strong><code>{generatedKey.publicKey}</code></p>}</section>
     {!account ? <section className="card"><h2>Connect registered center wallet</h2><p>Your center key stays in this browser session. The paper is available only during your assigned shift window.</p><button onClick={() => void run(connectWallet)}>Connect wallet</button></section> : <>
-      <section className="card summary"><div><span>Center</span><strong>{account}</strong></div><div><span>Assigned shift</span><strong>{manifest?.shiftId}</strong></div><div><span>Ciphertexts verified</span><strong>{ciphertexts.size} / 75</strong></div></section>
+      <section className="card summary"><div><span>Center</span><strong>{account}</strong></div><div><span>Assigned shift</span><strong>{manifest?.shiftId}</strong></div><div><span>Ciphertexts verified</span><strong>{ciphertexts.size} / 75</strong></div><button disabled={busy} onClick={() => void run(switchWallet)}>Switch wallet</button><button disabled={busy} onClick={disconnectWallet}>Disconnect</button></section>
+      <section className="card"><h2>Key-release window</h2>{releaseWindow && chainTimestamp !== null ? chainTimestamp < releaseWindow.opensAt
+        ? <p>Keys available in <strong>{formatDuration(releaseWindow.opensAt - chainTimestamp)}</strong> (chain time).</p>
+        : chainTimestamp > releaseWindow.closesAt
+          ? <p>This shift’s key-release window closed {formatDuration(chainTimestamp - releaseWindow.closesAt)} ago (chain time).</p>
+          : <p>Open now · closes in <strong>{formatDuration(releaseWindow.closesAt - chainTimestamp)}</strong> (chain time).</p>
+        : <p>Reading this shift’s schedule from the chain…</p>}<small>The countdown follows the latest chain block. The local demo chain may need its time advanced manually.</small></section>
       <section className="card"><h2>1. Fetch encrypted paper</h2><p>Download and hash-check all ciphertexts. This step does not release question keys.</p><button disabled={busy} onClick={() => void run(fetchCiphertexts)}>{busy ? "Working…" : "Fetch and verify ciphertexts"}</button></section>
       <section className="card"><h2>2. Load center key</h2><p>Select the center’s key file. The private key is used locally and is not uploaded.</p><input type="file" accept="application/json,.json" onChange={(event) => void run(() => importCenterKey(event.target.files?.[0]))} />{centerKey && <p className="success">Matching center key loaded in this session.</p>}</section>
       <section className="card"><h2>3. Request shares and build paper</h2><p>Three of five question-key shares are released only inside this center’s shift window. The center reconstructs keys locally. The exported paper contains no answers.</p><button disabled={busy || !centerKey || ciphertexts.size !== 75} onClick={() => void run(requestAndBuildPaper)}>{busy ? "Working…" : "Request shares and export paper"}</button>{paper && <p className="success">Paper ready · {paper.length} questions.</p>}</section>

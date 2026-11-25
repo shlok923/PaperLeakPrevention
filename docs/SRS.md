@@ -49,7 +49,7 @@ The application consists of:
 - **Five key-holder services:** one service per share index and committee member.
 - **Command-line tools:** support key generation, randomness commit/reveal, entropy submission, and audit.
 
-The question file is encrypted in the submitter's browser before upload. Five Shamir shares of its AES key are encrypted separately to the five holder public keys and included in the on-chain submission. At the center, each holder re-encrypts its share to the center's public key for delivery.
+Each question is encrypted in the submitter's browser before upload. Five Shamir shares of its AES key are encrypted separately to the five holder public keys. The submitter uploads the ciphertext files to object storage, then commits the full 50-question batch in one on-chain transaction, including all five holder-encrypted shares per question. At the center, each holder re-encrypts its share to the center's public key for delivery.
 
 ## 5. Functional requirements
 
@@ -72,34 +72,35 @@ The question file is encrypted in the submitter's browser before upload. Five Sh
 - **FR-12:** The portal shall encrypt each question independently with AES-256-GCM and a unique random key before upload.
 - **FR-13:** The crypto package shall split each question key into 5 Shamir shares such that any 3 distinct shares reconstruct the key.
 - **FR-14:** Each share shall be encrypted to its corresponding holder's registered X25519 public key. The plaintext share shall not be written to the blockchain or object store.
-- **FR-15:** The API shall store the encrypted question file in S3-compatible storage. The contract shall store its hash, object ID, plaintext commitment, and five plaintext-share hashes, and emit the five holder-encrypted shares.
-- **FR-16:** The portal shall show submission progress and support resuming after an interrupted upload or transaction, without displaying question text in application status messages.
+- **FR-15:** The API shall store encrypted question files in S3-compatible storage. The contract shall store each question's ciphertext hash, object ID, plaintext commitment, and five plaintext-share hashes, and emit the five holder-encrypted shares.
+- **FR-16:** After staging all 50 encrypted artifacts, the portal shall submit the submitter's 50 question records and holder-encrypted shares in one wallet-confirmed batch transaction. The contract shall validate and record the batch atomically, enforcing the submitter's role, subject/entity assignment, unique object IDs, and remaining quota for every item.
+- **FR-17:** The portal shall show batch upload and transaction progress and support resuming interrupted uploads or retrying a failed batch, without displaying question text in application status messages. A reverted batch shall not partially consume the submitter's on-chain quota.
 
 ### 5.3 Randomness and paper-set generation
 
-- **FR-17:** Each of the 5 committee members shall be able to submit one randomness commitment before the commit deadline and reveal the matching secret during the reveal window.
-- **FR-18:** At least 3 valid committee reveals shall be required to generate paper sets.
-- **FR-19:** The relayer shall submit the entropy value after the reveal deadline and before the entropy deadline. If no value is submitted by that deadline, the contract shall use the documented zero-value fallback.
-- **FR-20:** The contract shall derive a deterministic seed from the available entropy and valid committee reveals in committee order.
-- **FR-21:** The contract shall independently shuffle each subject/entity pool and distribute all 450 questions across 6 shifts. Each shift shall contain exactly 75 questions, with the entity pools contributing the specified 8/9 pattern.
-- **FR-22:** Centers and auditors shall be able to retrieve the generated shift question IDs from the contract.
+- **FR-18:** Each of the 5 committee members shall be able to submit one randomness commitment before the commit deadline and reveal the matching secret during the reveal window.
+- **FR-19:** At least 3 valid committee reveals shall be required to generate paper sets.
+- **FR-20:** The relayer shall submit the entropy value after the reveal deadline and before the entropy deadline. If no value is submitted by that deadline, the contract shall use the documented zero-value fallback.
+- **FR-21:** The contract shall derive a deterministic seed from the available entropy and valid committee reveals in committee order.
+- **FR-22:** The contract shall independently shuffle each subject/entity pool and distribute all 450 questions across 6 shifts. Each shift shall contain exactly 75 questions, with the entity pools contributing the specified 8/9 pattern.
+- **FR-23:** Centers and auditors shall be able to retrieve the generated shift question IDs from the contract.
 
 ### 5.4 Center access and paper creation
 
-- **FR-23:** A registered, non-revoked center shall be able to download encrypted files for its assigned shift before key release and verify each file against its on-chain ciphertext hash.
-- **FR-24:** The center shall be able to request keys only from 15 minutes before its shift starts through 30 minutes after the start. The request shall be recorded by the contract.
-- **FR-25:** Each key-holder service shall serve only its configured share index. Before releasing shares, it shall verify the center's signed request, the request transaction and event, the request time, the center's registration and revocation status, and its share hashes.
-- **FR-26:** Each holder response shall contain shares encrypted to the registered center public key and be signed by the holder's EVM wallet.
-- **FR-27:** The center shall verify holder identities and signatures, accept any 3 valid holder packages, decrypt and combine shares locally, reconstruct each question key, decrypt the question, and verify its plaintext commitment and schema.
-- **FR-28:** The center shall order questions deterministically for its center and shift and export a printable HTML paper plus `paper.json`.
-- **FR-29:** The printable paper shall include questions and options but omit correct answers. The center must not be able to request another center's package through the portal.
+- **FR-24:** A registered, non-revoked center shall be able to download encrypted files for its assigned shift before key release and verify each file against its on-chain ciphertext hash.
+- **FR-25:** The center shall be able to request keys only from 15 minutes before its shift starts through 30 minutes after the start. The request shall be recorded by the contract.
+- **FR-26:** Each key-holder service shall serve only its configured share index. Before releasing shares, it shall verify the center's signed request, the request transaction and event, the request time, the center's registration and revocation status, and its share hashes.
+- **FR-27:** Each holder response shall contain shares encrypted to the registered center public key and be signed by the holder's EVM wallet.
+- **FR-28:** The center shall verify holder identities and signatures, accept any 3 valid holder packages, decrypt and combine shares locally, reconstruct each question key, decrypt the question, and verify its plaintext commitment and schema.
+- **FR-29:** The center shall order questions deterministically for its center and shift and export a printable HTML paper plus `paper.json`.
+- **FR-30:** The printable paper shall include questions and options but omit correct answers. The center must not be able to request another center's package through the portal.
 
 ### 5.5 Finalization and audit
 
-- **FR-30:** After all shifts end, the administrator shall be able to finalize the exam.
-- **FR-31:** After finalization, the auditor shall be able to request signed share packages from holders for audit.
-- **FR-32:** The auditor shall verify question counts, uniqueness, commitments, ciphertext and share hashes, committee randomness, generated shift distribution, key requests, and plaintext commitments.
-- **FR-33:** The auditor shall produce a machine-readable report and a human-readable summary.
+- **FR-31:** After all shifts end, the administrator shall be able to finalize the exam.
+- **FR-32:** After finalization, the auditor shall be able to request signed share packages from holders for audit.
+- **FR-33:** The auditor shall verify question counts, uniqueness, commitments, ciphertext and share hashes, committee randomness, generated shift distribution, key requests, and plaintext commitments.
+- **FR-34:** The auditor shall produce a machine-readable report and a human-readable summary.
 
 ## 6. Data requirements
 
@@ -117,7 +118,7 @@ Each question payload has the following shape:
 
 `subject` is `P` for Physics, `C` for Chemistry, or `M` for Maths. `correct` is a zero-based index. The answer is part of the encrypted payload so authorized centers can validate and use it; the printable paper must omit it.
 
-The chain stores public metadata, hashes, scheduling, question IDs, and holder-encrypted share bytes. The object store holds `<objectId>.ct` encrypted question files. Holder and center private keys are held outside the chain and are not uploaded by the portals.
+The chain stores public metadata, hashes, scheduling, question IDs, and holder-encrypted share bytes. The object store holds `<objectId>.ct` encrypted question files. Each submitter's full batch is recorded in one transaction; no Merkle root substitutes for the individual on-chain records in this prototype. Holder and center private keys are held outside the chain and are not uploaded by the portals.
 
 ## 7. External interfaces
 
@@ -156,7 +157,7 @@ These controls reduce early access and make tampering detectable. They cannot pr
 The prototype is ready for demonstration when all of the following pass on the target test setup:
 
 1. The admin can configure the required roles, holder keys, relayer, centers, shifts, and deadlines, then open the exam.
-2. All 9 submitters can submit exactly 50 valid questions each; the portal rejects invalid or wrong-subject files, and the contract rejects reused object IDs and over-quota submissions.
+2. All 9 submitters can submit exactly 50 valid questions each with one wallet-confirmed batch transaction per submitter; the portal rejects invalid or wrong-subject files, and the contract rejects reused object IDs and over-quota batches atomically.
 3. Encrypted question files are stored in the S3-compatible store and match their on-chain hashes; the chain contains five encrypted shares and five share hashes per question.
 4. The committee and relayer can complete randomness, and the contract creates 6 distinct 75-question sets using all 450 submissions.
 5. A center can fetch encrypted files early, cannot decrypt before the key window, and can reconstruct questions inside its window using any 3 of 5 valid holders.
